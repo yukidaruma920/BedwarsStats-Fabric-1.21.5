@@ -11,10 +11,13 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class HypixelApiHandler {
     private static final Gson GSON = new Gson();
+    private static final Map<String, JsonObject> playerData = new ConcurrentHashMap<>();
     private static final String HYPIXEL_API_URL = "https://api.hypixel.net/player?uuid=";
     private static final String HYPIXEL_KEY_API_URL = "https://api.hypixel.net/key";
 
@@ -36,6 +39,14 @@ public class HypixelApiHandler {
         });
     }
 
+    public static void clearPlayerData() {
+        playerData.clear();
+    }
+
+    public static JsonObject getPlayerData(String username) {
+        return playerData.get(username.toLowerCase());
+    }
+
     public static void processPlayer(String username) {
         BedwarsStatsConfig.BedwarsMode mode = BedwarsStatsConfig.BedwarsMode.fromString(BedwarsStatsConfig.getBedwarsMode());
         processPlayer(username, mode);
@@ -49,22 +60,22 @@ public class HypixelApiHandler {
                     Minecraft client = Minecraft.getMinecraft();
                     if (client.thePlayer != null) {
                         String uuid = client.thePlayer.getUniqueID().toString();
-                        fetchAndDisplayStats(uuid, username, mode);
+                        fetchAndStoreStats(uuid, username, mode);
                     }
                 } else {
                     String mojangUrl = "https://api.mojang.com/users/profiles/minecraft/" + username;
                     String mojangResponse = sendHttpRequest(mojangUrl, null);
                     if (mojangResponse == null) {
-                        sendMessageToPlayer(EnumChatFormatting.YELLOW + username + EnumChatFormatting.WHITE + " is nicked, stats cannot be retrieved.");
+                        markPlayerAsNicked(username);
                         return;
                     }
                     JsonObject mojangJson = GSON.fromJson(mojangResponse, JsonObject.class);
                     if (mojangJson == null || !mojangJson.has("id")) {
-                        sendMessageToPlayer(EnumChatFormatting.YELLOW + username + EnumChatFormatting.WHITE + " is nicked, stats cannot be retrieved.");
+                        markPlayerAsNicked(username);
                         return;
                     }
                     String uuid = mojangJson.get("id").getAsString();
-                    fetchAndDisplayStats(uuid, username, mode);
+                    fetchAndStoreStats(uuid, username, mode);
                 }
             } catch (Exception e) {
                 e.printStackTrace();
@@ -72,7 +83,7 @@ public class HypixelApiHandler {
         });
     }
 
-    private static void fetchAndDisplayStats(String uuid, String displayUsername, BedwarsStatsConfig.BedwarsMode mode) throws Exception {
+    private static void fetchAndStoreStats(String uuid, String displayUsername, BedwarsStatsConfig.BedwarsMode mode) throws Exception {
         String apiKey = BedwarsStatsConfig.getApiKey();
         if (apiKey == null || apiKey.isEmpty()) {
             sendMessageToPlayer(EnumChatFormatting.RED + "Hypixel API Key not set!");
@@ -80,28 +91,37 @@ public class HypixelApiHandler {
         }
         String hypixelUrl = HYPIXEL_API_URL + uuid;
         String hypixelResponse = sendHttpRequest(hypixelUrl, apiKey);
-        if (hypixelResponse == null) return;
+        if (hypixelResponse == null) {
+            markPlayerAsNicked(displayUsername); // Assume nicked if API fails
+            return;
+        }
         JsonObject hypixelJson = GSON.fromJson(hypixelResponse, JsonObject.class);
 
         if (hypixelJson != null && !hypixelJson.get("success").getAsBoolean()) {
             if (hypixelJson.has("cause") && hypixelJson.get("cause").getAsString().equals("Invalid API key")) {
                 sendMessageToPlayer(EnumChatFormatting.RED + "Your Hypixel API key is invalid!");
-                return;
             }
+            markPlayerAsNicked(displayUsername); // Assume nicked on API error
+            return;
         }
 
         if (hypixelJson == null || !hypixelJson.has("player") || hypixelJson.get("player").isJsonNull()) {
-            sendMessageToPlayer(EnumChatFormatting.YELLOW + displayUsername + EnumChatFormatting.WHITE + " is nicked, stats cannot be retrieved.");
+            markPlayerAsNicked(displayUsername);
             return;
         }
         JsonObject player = hypixelJson.getAsJsonObject("player");
 
-        if (!player.get("displayname").getAsString().equalsIgnoreCase(displayUsername)) {
-            player.addProperty("displayname", displayUsername);
-        }
+        // Ensure displayname is consistent, as API might return a different case
+        player.addProperty("displayname", displayUsername);
 
-        String chatMessage = formatStats(player, mode);
-        if (chatMessage != null) sendMessageToPlayer(chatMessage);
+        playerData.put(displayUsername.toLowerCase(), player);
+    }
+
+    private static void markPlayerAsNicked(String username) {
+        JsonObject nickedPlayer = new JsonObject();
+        nickedPlayer.addProperty("displayname", username);
+        nickedPlayer.addProperty("nicked", true);
+        playerData.put(username.toLowerCase(), nickedPlayer);
     }
 
     private static String formatStats(JsonObject player, BedwarsStatsConfig.BedwarsMode mode) {
