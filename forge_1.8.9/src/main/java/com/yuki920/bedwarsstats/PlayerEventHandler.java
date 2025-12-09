@@ -6,7 +6,7 @@ import net.minecraft.client.network.NetworkPlayerInfo;
 import net.minecraft.util.ChatComponentText;
 import net.minecraft.util.IChatComponent;
 import net.minecraftforge.client.event.ClientChatReceivedEvent;
-import net.minecraftforge.client.event.RenderPlayerListEvent;
+import net.minecraftforge.client.event.RenderGameOverlayEvent;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.network.FMLNetworkEvent;
 
@@ -22,15 +22,14 @@ public class PlayerEventHandler {
     private boolean isDisplayOverridden = false;
     private boolean isInBedwarsGame = false;
     private final Map<UUID, IChatComponent> originalDisplayNames = new ConcurrentHashMap<>();
-    // Pattern to extract the player name, ignoring team prefixes, colors, etc.
     private static final Pattern NAME_PATTERN = Pattern.compile("^(?:§[0-9a-fk-or])*(?:\\[[A-Z+]+] )?(?:§[0-9a-fk-or])*(\\w+).*");
 
     public void prepareForWho() {
         if (isInBedwarsGame) {
             BedwarsStatsMod.LOGGER.info("'/who' command detected. Clearing previous stats and preparing to fetch new ones.");
             whoCommandTriggered = true;
-            isDisplayOverridden = true; // Mark that we are now overriding the display
-            resetDisplayNames(); // Clear any previous overrides
+            isDisplayOverridden = true;
+            resetDisplayNames();
             HypixelApiHandler.clearPlayerData();
         }
     }
@@ -60,7 +59,11 @@ public class PlayerEventHandler {
     }
 
     @SubscribeEvent
-    public void onRenderPlayerList(RenderPlayerListEvent.Pre event) {
+    public void onRenderGameOverlay(RenderGameOverlayEvent.Pre event) {
+        if (event.type != RenderGameOverlayEvent.ElementType.PLAYER_LIST) {
+            return;
+        }
+
         if (!isInBedwarsGame || !isDisplayOverridden) return;
 
         for (NetworkPlayerInfo playerInfo : Minecraft.getMinecraft().getNetHandler().getPlayerInfoMap()) {
@@ -68,7 +71,7 @@ public class PlayerEventHandler {
             String currentDisplayName = (displayNameComponent != null) ? displayNameComponent.getFormattedText() : playerInfo.getGameProfile().getName();
 
             Matcher matcher = NAME_PATTERN.matcher(currentDisplayName);
-            String username = playerInfo.getGameProfile().getName(); // Fallback
+            String username = playerInfo.getGameProfile().getName();
             if (matcher.matches()) {
                 username = matcher.group(1);
             }
@@ -115,7 +118,7 @@ public class PlayerEventHandler {
                 }
             }
         } catch (Exception e) {
-            // Can sometimes throw ConcurrentModificationException, ignore it.
+            // Ignore ConcurrentModificationException
         }
         originalDisplayNames.clear();
     }
@@ -126,7 +129,7 @@ public class PlayerEventHandler {
         }
 
         if (!playerData.has("stats") || playerData.get("stats").isJsonNull() || !playerData.getAsJsonObject("stats").has("Bedwars") || !playerData.has("achievements")) {
-            return ""; // No stats, don't append anything
+            return "";
         }
 
         JsonObject bedwars = playerData.getAsJsonObject("stats").getAsJsonObject("Bedwars");
@@ -140,7 +143,7 @@ public class PlayerEventHandler {
         double fkdr = (finalDeaths == 0) ? finalKills : (double) finalKills / finalDeaths;
         double wlr = (losses == 0) ? wins : (double) wins / losses;
 
-        String prestige = PrestigeFormatter.formatPrestige(stars); // This returns "[100✫]"
+        String prestige = PrestigeFormatter.formatPrestige(stars);
         String fkdrStr = String.format("%.2f", fkdr);
         String wlrStr = String.format("%.2f", wlr);
 
